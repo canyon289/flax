@@ -528,6 +528,7 @@ class CudnnLSTM(Module):
       return_carry: Optional[bool] = None,
       deterministic: bool = False,
       initial_states: Optional[Tuple[Array, Array]] = None,
+      gpu_available: bool = False
   ) -> Union[Array, Tuple[Array, Carry]]:
     batch_size = inputs.shape[0]
     input_size = inputs.shape[2]
@@ -558,12 +559,25 @@ class CudnnLSTM(Module):
     else:
       seq_lengths = jnp.full((batch_size,), inputs.shape[1], dtype=jnp.int32)
 
-    y, h, c = jax.experimental.rnn.lstm(
-        x=inputs, h_0=h_0, c_0=c_0, weights=weights,
-        seq_lengths=seq_lengths, input_size=input_size,
-        hidden_size=self.features, num_layers=self.num_layers,
-        dropout=dropout, bidirectional=self.bidirectional,
-    )
+    if gpu_available:
+      y, h, c = jax.experimental.rnn.lstm(
+          x=inputs, h_0=h_0, c_0=c_0, weights=weights,
+          seq_lengths=seq_lengths, input_size=input_size,
+          hidden_size=self.features, num_layers=self.num_layers,
+          dropout=dropout, bidirectional=self.bidirectional,
+      )
+    else:
+      W_ih, W_hh, b_ih, b_hh = jax.experimental.rnn.unpack_lstm_weights(
+        weights, input_size, self.features, self.num_layers, self.bidirectional,
+      )
+      y, h, c = jax.experimental.rnn.lstm_ref(
+        x=inputs, h_0=h_0, c_0=c_0, W_ih=W_ih, W_hh=W_hh,
+        b_ih=b_ih, b_hh=b_hh, seq_lengths=seq_lengths,
+        input_size=input_size, hidden_size=self.features,
+        num_layers=self.num_layers, dropout=dropout,
+        bidirectional=self.bidirectional,
+      )
+
     if return_carry:
       return y, (h, c)
 
