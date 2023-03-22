@@ -31,7 +31,7 @@ from flax.linen.linear import Conv
 from flax.linen.linear import default_kernel_init
 from flax.linen.linear import Dense
 from flax.linen.linear import PrecisionLike
-from flax.linen.module import compact
+from flax.linen.module import compact, nowrap
 from flax.linen.module import Module
 from jax import numpy as jnp
 from jax import random
@@ -528,8 +528,12 @@ class CudnnLSTM(Module):
       return_carry: Optional[bool] = None,
       deterministic: bool = False,
       initial_states: Optional[Tuple[Array, Array]] = None,
-      use_gpu: bool = True,
+      use_cuda: bool = True,
   ) -> Union[Array, Tuple[Array, Carry]]:
+
+    if jax.devices()[0].platform != 'gpu':
+      use_cuda = False
+
     batch_size = inputs.shape[0]
     input_size = inputs.shape[2]
     num_directions = 2 if self.bidirectional else 1
@@ -559,7 +563,7 @@ class CudnnLSTM(Module):
     else:
       seq_lengths = jnp.full((batch_size,), inputs.shape[1], dtype=jnp.int32)
 
-    if use_gpu:
+    if use_cuda:
       y, h, c = jax.experimental.rnn.lstm(
           x=inputs, h_0=h_0, c_0=c_0, weights=weights,
           seq_lengths=seq_lengths, input_size=input_size,
@@ -567,9 +571,7 @@ class CudnnLSTM(Module):
           dropout=dropout, bidirectional=self.bidirectional,
       )
     else:
-      W_ih, W_hh, b_ih, b_hh = jax.experimental.rnn.unpack_lstm_weights(
-        weights, input_size, self.features, self.num_layers, self.bidirectional,
-      )
+      W_ih, W_hh, b_ih, b_hh = self.unpack_weights(weights, input_size)
       y, h, c = jax.experimental.rnn.lstm_ref(
         x=inputs, h_0=h_0, c_0=c_0, W_ih=W_ih, W_hh=W_hh,
         b_ih=b_ih, b_hh=b_hh, seq_lengths=seq_lengths,
@@ -582,6 +584,14 @@ class CudnnLSTM(Module):
       return y, (h, c)
 
     return y
+
+  @nowrap
+  def unpack_weights(
+    self, weights: Array, input_size: int
+  ) -> Tuple[Dict[int, Array], Dict[int, Array], Dict[int, Array], Dict[int, Array]]:
+    return jax.experimental.rnn.unpack_lstm_weights(
+      weights, input_size, self.features, self.num_layers, self.bidirectional,
+    )
 
 class RNN(Module):
   """The ``RNN`` module takes any :class:`RNNCellBase` instance and applies it over a sequence

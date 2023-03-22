@@ -480,3 +480,49 @@ class BidirectionalTest(absltest.TestCase):
     ys, variables = module.init_with_output(jax.random.PRNGKey(0), xs)
 
     self.assertEqual(ys.shape, (batch_size, seq_len, channels_out))
+
+  # skip tests
+  @pytest.mark.skip(reason="LSTMCell doesn't use bias term for the Dense layers applied to the inputs")
+  def test_compare_cudnn_with_rnn(self):
+    batch_size = 3
+    seq_len = 4
+    channels_in = 5
+    channels_out = 6
+
+    cudnn_module = nn.CudnnLSTM(features=channels_out)
+    rnn_module = nn.RNN(nn.OptimizedLSTMCell(), cell_size=channels_out)
+
+    xs = jnp.ones((batch_size, seq_len, channels_in))
+    ys_cudnn: jnp.ndarray
+    ys_cudnn, variables_cudnn = cudnn_module.init_with_output(jax.random.PRNGKey(0), xs)
+
+    variables_rnn = rnn_module.init(jax.random.PRNGKey(0), xs)
+
+    W_ih, W_hh, b_ih, b_hh = cudnn_module.unpack_weights(
+      variables_cudnn['params']['weights'], channels_in)
+    W_ii, W_if, W_ig, W_io = jnp.split(W_ih[0], 4, axis=0)
+    W_hi, W_hf, W_hg, W_ho = jnp.split(W_hh[0], 4, axis=0)
+    b_ii, b_if, b_ig, b_io = jnp.split(b_ih[0], 4, axis=0)
+    b_hi, b_hf, b_hg, b_ho = jnp.split(b_hh[0], 4, axis=0)
+
+    variables_rnn_dict = variables_rnn.unfreeze()
+    variables_rnn_dict['params']['cell']['hf']['kernel'] = W_hf.T
+    variables_rnn_dict['params']['cell']['hf']['bias'] = b_hf
+    variables_rnn_dict['params']['cell']['hg']['kernel'] = W_hg.T
+    variables_rnn_dict['params']['cell']['hg']['bias'] = b_hg
+    variables_rnn_dict['params']['cell']['hi']['kernel'] = W_hi.T
+    variables_rnn_dict['params']['cell']['hi']['bias'] = b_hi
+    variables_rnn_dict['params']['cell']['ho']['kernel'] = W_ho.T
+    variables_rnn_dict['params']['cell']['ho']['bias'] = b_ho
+    variables_rnn_dict['params']['cell']['if']['kernel'] = W_if.T
+    variables_rnn_dict['params']['cell']['ig']['kernel'] = W_ig.T
+    variables_rnn_dict['params']['cell']['ii']['kernel'] = W_ii.T
+    variables_rnn_dict['params']['cell']['io']['kernel'] = W_io.T
+
+    # b_ii, b_if, b_ig, and b_io are not used in the LSTMCell
+    # hard to compare the results. Try zeroing them out in the `weights` array
+    # in the future.
+    ys_rnn: jnp.ndarray
+    ys_rnn = rnn_module.apply(variables_rnn_dict, xs)
+
+    np.testing.assert_allclose(ys_cudnn, ys_rnn, atol=1e-5)
