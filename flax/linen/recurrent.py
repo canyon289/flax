@@ -528,7 +528,7 @@ class CudnnLSTM(Module):
       return_carry: Optional[bool] = None,
       deterministic: bool = False,
       initial_states: Optional[Tuple[Array, Array]] = None,
-      gpu_available: bool = False
+      use_gpu: bool = True,
   ) -> Union[Array, Tuple[Array, Carry]]:
     batch_size = inputs.shape[0]
     input_size = inputs.shape[2]
@@ -559,7 +559,7 @@ class CudnnLSTM(Module):
     else:
       seq_lengths = jnp.full((batch_size,), inputs.shape[1], dtype=jnp.int32)
 
-    if gpu_available:
+    if use_gpu:
       y, h, c = jax.experimental.rnn.lstm(
           x=inputs, h_0=h_0, c_0=c_0, weights=weights,
           seq_lengths=seq_lengths, input_size=input_size,
