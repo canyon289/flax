@@ -466,3 +466,17 @@ class BidirectionalTest(absltest.TestCase):
       jax.tree_map(jnp.shape, carry_backward),
       ((batch_size, channels_out), (batch_size, channels_out))
     )
+
+  def test_cuddn_lstm(self):
+    batch_size = 3
+    seq_len = 4
+    channels_in = 5
+    channels_out = 6
+
+    module = nn.CudnnLSTM(features=channels_out)
+
+    xs = jnp.ones((batch_size, seq_len, channels_in))
+    ys: jnp.ndarray
+    ys, variables = module.init_with_output(jax.random.PRNGKey(0), xs)
+
+    self.assertEqual(ys.shape, (batch_size, seq_len, channels_out))

@@ -40,6 +40,7 @@ from flax.core import lift
 from flax.core.frozen_dict import FrozenDict
 from flax.linen import transforms
 import jax
+import jax.experimental.rnn
 
 A = TypeVar('A')
 PRNGKey = Any
@@ -512,6 +513,61 @@ class ConvLSTMCell(RNNCellBase):
     key1, key2 = random.split(rng)
     mem_shape = batch_dims + size
     return init_fn(key1, mem_shape), init_fn(key2, mem_shape)
+
+class CudnnLSTM(Module):
+  features: int
+  num_layers: int = 1
+  dropout_rate: float = 0.0
+  bidirectional: bool = False
+
+  @compact
+  def __call__(
+      self,
+      inputs: Array,
+      segmentation_mask: Optional[Array] = None,
+      return_carry: Optional[bool] = None,
+      deterministic: bool = False,
+      initial_states: Optional[Tuple[Array, Array]] = None,
+  ) -> Union[Array, Tuple[Array, Carry]]:
+    batch_size = inputs.shape[0]
+    input_size = inputs.shape[2]
+    num_directions = 2 if self.bidirectional else 1
+    dropout = 0.0 if deterministic else self.dropout_rate
+
+    weights = self.param(
+        'weights',
+        jax.experimental.rnn.init_lstm_weight,
+        input_size, self.features,
+        self.num_layers, self.bidirectional,
+    )
+
+    if initial_states is None:
+      h_0 = jnp.zeros(
+          (num_directions * self.num_layers, batch_size, self.features),
+          jnp.float32,
+      )
+      c_0 = jnp.zeros(
+          (num_directions * self.num_layers, batch_size, self.features),
+          jnp.float32,
+      )
+    else:
+      h_0, c_0 = initial_states
+
+    if segmentation_mask is not None:
+      seq_lengths = jnp.sum(segmentation_mask, axis=1, dtype=jnp.int32)
+    else:
+      seq_lengths = jnp.full((batch_size,), inputs.shape[1], dtype=jnp.int32)
+
+    y, h, c = jax.experimental.rnn.lstm(
+        x=inputs, h_0=h_0, c_0=c_0, weights=weights,
+        seq_lengths=seq_lengths, input_size=input_size,
+        hidden_size=self.features, num_layers=self.num_layers,
+        dropout=dropout, bidirectional=self.bidirectional,
+    )
+    if return_carry:
+      return y, (h, c)
+
+    return y
 
 class RNN(Module):
   """The ``RNN`` module takes any :class:`RNNCellBase` instance and applies it over a sequence
