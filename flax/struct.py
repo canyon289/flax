@@ -16,6 +16,7 @@
 """
 
 import dataclasses
+import inspect
 from typing import TypeVar, Callable, Tuple, Union, Any
 
 from . import serialization
@@ -134,9 +135,14 @@ def dataclass(clz: _T) -> _T:
     obj_vars.update(zip(data_fields, data))
     return obj
 
-  jax.tree_util.register_pytree_with_keys(
-      data_clz, iterate_clz_with_keys, clz_from_iterable
-  )
+  if "flatten_func" in inspect.signature(jax.tree_util.register_pytree_with_keys).parameters:
+    jax.tree_util.register_pytree_with_keys(
+        data_clz, iterate_clz_with_keys, clz_from_iterable, flatten_func=iterate_clz
+    )
+  else:
+    jax.tree_util.register_pytree_with_keys(
+        data_clz, iterate_clz_with_keys, clz_from_iterable
+    )
 
   def to_state_dict(x):
     state_dict = {name: serialization.to_state_dict(getattr(x, name))
